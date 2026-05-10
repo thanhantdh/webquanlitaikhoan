@@ -366,11 +366,11 @@ async function sendTelegramAlert(accountName, hours) {
     }
 
     const message =
-        `🚨 *Cảnh báo Hệ Thống*\n\n` +
-        `Tài khoản: *${accountName}*\n` +
-        `Đã hoạt động đủ: *${hours} giờ*\n` +
-        `Trạng thái: ⛔ Đã được tự động dừng\\!\n\n` +
-        `_Cảnh báo: Tài khoản ${accountName} đã hoạt động đủ ${hours} giờ và đã được tự động dừng\\!_`;
+        `🚨 Cảnh báo Hệ Thống\n\n` +
+        `📛 Tài khoản: ${accountName}\n` +
+        `⏱ Đã hoạt động đủ: ${hours} giờ\n` +
+        `⛔ Trạng thái: Đã được tự động dừng!\n\n` +
+        `⚠️ Tài khoản ${accountName} đã hoạt động đủ ${hours} giờ và đã được tự động dừng!`;
 
     const url = `https://api.telegram.org/bot${settings.botToken}/sendMessage`;
 
@@ -380,8 +380,7 @@ async function sendTelegramAlert(accountName, hours) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 chat_id: settings.chatId,
-                text: message,
-                parse_mode: 'MarkdownV2'
+                text: message
             })
         });
         if (res.ok) {
