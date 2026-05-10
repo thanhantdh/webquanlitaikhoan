@@ -7,7 +7,7 @@ import logging
 import os
 import io
 from datetime import datetime, time as dtime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     MessageHandler, ContextTypes, filters
@@ -593,7 +593,33 @@ def main():
     init_db()
     logger.info("Database initialized")
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Auto-register command menu in Telegram UI
+    async def post_init(application):
+        commands = [
+            BotCommand("start", "Menu chính"),
+            BotCommand("add", "Thêm TK: /add tên giờ"),
+            BotCommand("addmulti", "Thêm nhiều TK"),
+            BotCommand("list", "Danh sách tài khoản"),
+            BotCommand("info", "Chi tiết TK: /info tên"),
+            BotCommand("search", "Tìm kiếm TK"),
+            BotCommand("run", "Chạy TK: /run tên"),
+            BotCommand("stop", "Dừng TK: /stop tên"),
+            BotCommand("runall", "Chạy tất cả"),
+            BotCommand("stopall", "Dừng tất cả"),
+            BotCommand("sethours", "Đổi giờ: /sethours tên giờ"),
+            BotCommand("rename", "Đổi tên TK"),
+            BotCommand("reset", "Reset thời gian"),
+            BotCommand("delete", "Xóa TK"),
+            BotCommand("deleteall", "Xóa tất cả"),
+            BotCommand("export", "Xuất file danh sách"),
+            BotCommand("import", "Hướng dẫn import"),
+            BotCommand("status", "Thống kê tổng quan"),
+            BotCommand("help", "Trợ giúp"),
+        ]
+        await application.bot.set_my_commands(commands)
+        logger.info("Bot commands menu registered")
+
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
 
     # Commands
     app.add_handler(CommandHandler("start", cmd_start))
