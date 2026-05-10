@@ -30,16 +30,16 @@ python bot.py
 | `/add TK01 8` | Thêm TK, thời hạn 8 giờ |
 | `/addmulti TK1 TK2 TK3 8` | Thêm nhiều TK cùng lúc |
 | `/list` | Xem danh sách + nút bấm |
-| `/info TK01` | Chi tiết 1 TK |
+| `/info Tên_hoặc_STT` | Chi tiết 1 TK |
 | `/search facebook` | Tìm kiếm TK |
-| `/run TK01` | Bắt đầu đếm giờ |
-| `/stop TK01` | Dừng đếm giờ |
+| `/run Tên_hoặc_STT` | Bắt đầu đếm giờ |
+| `/stop Tên_hoặc_STT` | Dừng đếm giờ |
 | `/runall` | Chạy tất cả |
 | `/stopall` | Dừng tất cả |
-| `/sethours TK01 12` | Đổi số giờ tối đa |
-| `/rename TK_cu TK_moi` | Đổi tên TK |
-| `/reset TK01` | Reset thời gian về 0 |
-| `/delete TK01` | Xóa 1 TK |
+| `/sethours Tên_hoặc_STT 12` | Đổi số giờ tối đa |
+| `/rename Tên_hoặc_STT TK_moi` | Đổi tên TK |
+| `/reset Tên_hoặc_STT` | Reset thời gian về 0 |
+| `/delete Tên_hoặc_STT` | Xóa 1 TK |
 | `/deleteall` | Xóa tất cả (có xác nhận) |
 | `/export` | Xuất file .txt danh sách |
 | `/import` | Hướng dẫn import file |
@@ -55,12 +55,15 @@ TaiKhoan02,4
 TaiKhoan03,2.5
 ```
 
-## 6. Tự động
+## 6. Tính năng Tự động & Tiện ích
 
-- ⏱ Timer cập nhật mỗi 5 giây
-- 🚨 Thông báo **đúng khi hết giờ** (không cảnh báo sớm)
-- 📊 Báo cáo hàng ngày lúc 8:00 sáng (UTC+7)
-- 🔒 Chỉ OWNER_ID mới dùng được bot
+- ⏱ **Cập nhật thời gian:** Timer quét mỗi 5 giây.
+- ⚠️ **Cảnh báo sớm:** Nhắn tin thông báo trước 15 phút khi tài khoản sắp hết giờ.
+- 🚨 **Hết giờ:** Tự động dừng và gửi thông báo khi tài khoản chạm mốc 0.
+- 📑 **Phân trang danh sách:** Lệnh `/list` tự động chia thành nhiều trang (10 TK/trang) nếu số lượng lớn.
+- 🔢 **Hỗ trợ Số Thứ Tự (STT):** Có thể dùng STT trong `/list` thay cho tên tài khoản ở mọi lệnh (vd: `/run 1`).
+- 📊 **Báo cáo hàng ngày:** Tự động gửi lúc 8:00 sáng (UTC+7).
+- 🔒 **Bảo mật:** Chỉ OWNER_ID mới dùng được bot.
 
 ## 7. Deploy (Render.com)
 

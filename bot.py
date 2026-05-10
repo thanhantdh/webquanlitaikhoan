@@ -42,6 +42,10 @@ def init_db():
             created_at TEXT NOT NULL
         )
     """)
+    try:
+        conn.execute("ALTER TABLE accounts ADD COLUMN warned_early INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     conn.commit()
     conn.close()
 
@@ -73,7 +77,7 @@ def update_elapsed(name, elapsed):
             (elapsed, elapsed, name))
 
 def reset_account(name):
-    db_exec("UPDATE accounts SET elapsed=0, status='stopped' WHERE LOWER(name)=LOWER(?)", (name,))
+    db_exec("UPDATE accounts SET elapsed=0, status='stopped', warned_early=0 WHERE LOWER(name)=LOWER(?)", (name,))
 
 def delete_account(name):
     db_exec("DELETE FROM accounts WHERE LOWER(name)=LOWER(?)", (name,))
@@ -82,7 +86,7 @@ def delete_all_accounts():
     db_exec("DELETE FROM accounts")
 
 def set_hours(name, hours):
-    db_exec("UPDATE accounts SET max_hours=? WHERE LOWER(name)=LOWER(?)", (hours, name))
+    db_exec("UPDATE accounts SET max_hours=?, warned_early=0 WHERE LOWER(name)=LOWER(?)", (hours, name))
 
 def rename_db(old, new):
     db_exec("UPDATE accounts SET name=? WHERE LOWER(name)=LOWER(?)", (new, old))
@@ -118,6 +122,17 @@ def owner_only(func):
 def progress_bar(pct, length=10):
     filled = int(pct / 100 * length)
     return "█" * filled + "░" * (length - filled)
+
+def resolve_account_name(identifier):
+    acc = get_account(identifier)
+    if acc:
+        return acc['name']
+    if identifier.isdigit():
+        idx = int(identifier)
+        accs = get_all_accounts()
+        if 1 <= idx <= len(accs):
+            return accs[idx - 1]['name']
+    return None
 
 # ==================== COMMANDS ====================
 
@@ -158,7 +173,7 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_account_list(update.effective_chat.id, context)
 
-async def send_account_list(chat_id, context, edit_msg_id=None):
+async def send_account_list(chat_id, context, edit_msg_id=None, page=1):
     accs = get_all_accounts()
     if not accs:
         text = "📭 Chưa có tài khoản nào.\nDùng /add <tên> <giờ> để thêm."
@@ -168,9 +183,19 @@ async def send_account_list(chat_id, context, edit_msg_id=None):
             await context.bot.send_message(chat_id, text)
         return
 
-    lines = ["📋 <b>Danh Sách Tài Khoản</b>\n"]
+    ITEMS_PER_PAGE = 10
+    total_pages = (len(accs) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(1, min(page, total_pages))
+    
+    start_idx = (page - 1) * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    page_accs = accs[start_idx:end_idx]
+
+    lines = [f"📋 <b>Danh Sách Tài Khoản</b> (Trang {page}/{total_pages})\n"]
     buttons = []
-    for i, a in enumerate(accs):
+    
+    for i_relative, a in enumerate(page_accs):
+        i = start_idx + i_relative
         max_sec = int(a["max_hours"] * 3600)
         pct = min(a["elapsed"] / max_sec * 100, 100) if max_sec > 0 else 0
         icons = {"running": "🟢", "stopped": "⏸", "expired": "🔴"}
@@ -194,11 +219,19 @@ async def send_account_list(chat_id, context, edit_msg_id=None):
                    InlineKeyboardButton(f"🗑", callback_data=f"del_{n}")]
         buttons.append(row)
 
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Trước", callback_data=f"page_{page-1}"))
+    if page < total_pages:
+        nav_buttons.append(InlineKeyboardButton("Sau ➡️", callback_data=f"page_{page+1}"))
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
     buttons.append([
         InlineKeyboardButton("▶ Chạy tất cả", callback_data="runall"),
         InlineKeyboardButton("⏸ Dừng tất cả", callback_data="stopall")
     ])
-    buttons.append([InlineKeyboardButton("🔄 Làm mới", callback_data="list")])
+    buttons.append([InlineKeyboardButton("🔄 Làm mới", callback_data=f"page_{page}")])
 
     text = "\n".join(lines)
     markup = InlineKeyboardMarkup(buttons)
@@ -216,13 +249,14 @@ async def send_account_list(chat_id, context, edit_msg_id=None):
 @owner_only
 async def cmd_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("📌 Dùng: <code>/run TenTK</code>", parse_mode="HTML")
+        await update.message.reply_text("📌 Dùng: <code>/run Tên_hoặc_STT</code>", parse_mode="HTML")
         return
-    name = context.args[0]
+    identifier = context.args[0]
+    name = resolve_account_name(identifier)
+    if not name:
+        await update.message.reply_text(f"❌ Không tìm thấy <b>{identifier}</b>", parse_mode="HTML")
+        return
     acc = get_account(name)
-    if not acc:
-        await update.message.reply_text(f"❌ Không tìm thấy <b>{name}</b>", parse_mode="HTML")
-        return
     if acc["status"] == "expired":
         await update.message.reply_text(f"🔴 <b>{name}</b> đã hết giờ. Dùng /reset {name} trước.", parse_mode="HTML")
         return
@@ -232,13 +266,14 @@ async def cmd_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @owner_only
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("📌 Dùng: <code>/stop TenTK</code>", parse_mode="HTML")
+        await update.message.reply_text("📌 Dùng: <code>/stop Tên_hoặc_STT</code>", parse_mode="HTML")
         return
-    name = context.args[0]
+    identifier = context.args[0]
+    name = resolve_account_name(identifier)
+    if not name:
+        await update.message.reply_text(f"❌ Không tìm thấy <b>{identifier}</b>", parse_mode="HTML")
+        return
     acc = get_account(name)
-    if not acc:
-        await update.message.reply_text(f"❌ Không tìm thấy <b>{name}</b>", parse_mode="HTML")
-        return
     update_status(name, "stopped")
     await update.message.reply_text(
         f"⏸ <b>{name}</b> đã dừng — Đã chạy: {fmt_time(acc['elapsed'])}", parse_mode="HTML")
@@ -256,11 +291,12 @@ async def cmd_stopall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @owner_only
 async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("📌 Dùng: <code>/delete TenTK</code>", parse_mode="HTML")
+        await update.message.reply_text("📌 Dùng: <code>/delete Tên_hoặc_STT</code>", parse_mode="HTML")
         return
-    name = context.args[0]
-    if not get_account(name):
-        await update.message.reply_text(f"❌ Không tìm thấy <b>{name}</b>", parse_mode="HTML")
+    identifier = context.args[0]
+    name = resolve_account_name(identifier)
+    if not name:
+        await update.message.reply_text(f"❌ Không tìm thấy <b>{identifier}</b>", parse_mode="HTML")
         return
     delete_account(name)
     await update.message.reply_text(f"🗑 Đã xóa <b>{name}</b>", parse_mode="HTML")
@@ -268,11 +304,12 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @owner_only
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("📌 Dùng: <code>/reset TenTK</code>", parse_mode="HTML")
+        await update.message.reply_text("📌 Dùng: <code>/reset Tên_hoặc_STT</code>", parse_mode="HTML")
         return
-    name = context.args[0]
-    if not get_account(name):
-        await update.message.reply_text(f"❌ Không tìm thấy <b>{name}</b>", parse_mode="HTML")
+    identifier = context.args[0]
+    name = resolve_account_name(identifier)
+    if not name:
+        await update.message.reply_text(f"❌ Không tìm thấy <b>{identifier}</b>", parse_mode="HTML")
         return
     reset_account(name)
     await update.message.reply_text(f"↺ Đã reset <b>{name}</b> về 00:00:00", parse_mode="HTML")
@@ -308,17 +345,17 @@ HELP_TEXT = (
     "/add <code>tên giờ</code> — Thêm tài khoản\n"
     "/addmulti <code>tên1 tên2 giờ</code> — Thêm nhiều TK\n"
     "/list — Danh sách tài khoản\n"
-    "/info <code>tên</code> — Chi tiết 1 TK\n"
+    "/info <code>tên_hoặc_stt</code> — Chi tiết 1 TK\n"
     "/search <code>từ_khóa</code> — Tìm kiếm\n\n"
     "<b>⏱ Điều khiển:</b>\n"
-    "/run <code>tên</code> — Bắt đầu đếm giờ\n"
-    "/stop <code>tên</code> — Dừng đếm giờ\n"
+    "/run <code>tên_hoặc_stt</code> — Bắt đầu đếm giờ\n"
+    "/stop <code>tên_hoặc_stt</code> — Dừng đếm giờ\n"
     "/runall · /stopall — Chạy/Dừng tất cả\n\n"
     "<b>⚙️ Cài đặt:</b>\n"
-    "/sethours <code>tên giờ</code> — Đổi số giờ\n"
-    "/rename <code>tên_cũ tên_mới</code> — Đổi tên\n"
-    "/reset <code>tên</code> — Reset thời gian\n"
-    "/delete <code>tên</code> · /deleteall — Xóa\n\n"
+    "/sethours <code>tên_hoặc_stt giờ</code> — Đổi số giờ\n"
+    "/rename <code>tên_hoặc_stt tên_mới</code> — Đổi tên\n"
+    "/reset <code>tên_hoặc_stt</code> — Reset thời gian\n"
+    "/delete <code>tên_hoặc_stt</code> · /deleteall — Xóa\n\n"
     "<b>📊 Khác:</b>\n"
     "/status — Thống kê\n"
     "/export — Xuất file .txt\n"
@@ -343,11 +380,12 @@ async def cmd_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @owner_only
 async def cmd_sethours(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
-        await update.message.reply_text("📌 Dùng: <code>/sethours TenTK SoGio</code>", parse_mode="HTML")
+        await update.message.reply_text("📌 Dùng: <code>/sethours Tên_hoặc_STT SoGio</code>", parse_mode="HTML")
         return
-    name, hours = context.args[0], float(context.args[1])
-    if not get_account(name):
-        await update.message.reply_text(f"❌ Không tìm thấy <b>{name}</b>", parse_mode="HTML")
+    identifier, hours = context.args[0], float(context.args[1])
+    name = resolve_account_name(identifier)
+    if not name:
+        await update.message.reply_text(f"❌ Không tìm thấy <b>{identifier}</b>", parse_mode="HTML")
         return
     set_hours(name, hours)
     await update.message.reply_text(f"✅ Đã đổi <b>{name}</b> → <b>{hours}h</b>", parse_mode="HTML")
@@ -355,11 +393,12 @@ async def cmd_sethours(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @owner_only
 async def cmd_rename(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
-        await update.message.reply_text("📌 Dùng: <code>/rename TenCu TenMoi</code>", parse_mode="HTML")
+        await update.message.reply_text("📌 Dùng: <code>/rename Tên_hoặc_STT TenMoi</code>", parse_mode="HTML")
         return
-    old, new = context.args[0], context.args[1]
-    if not get_account(old):
-        await update.message.reply_text(f"❌ Không tìm thấy <b>{old}</b>", parse_mode="HTML")
+    identifier, new = context.args[0], context.args[1]
+    old = resolve_account_name(identifier)
+    if not old:
+        await update.message.reply_text(f"❌ Không tìm thấy <b>{identifier}</b>", parse_mode="HTML")
         return
     if get_account(new):
         await update.message.reply_text(f"⚠️ <b>{new}</b> đã tồn tại!", parse_mode="HTML")
@@ -370,12 +409,14 @@ async def cmd_rename(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @owner_only
 async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("📌 Dùng: <code>/info TenTK</code>", parse_mode="HTML")
+        await update.message.reply_text("📌 Dùng: <code>/info Tên_hoặc_STT</code>", parse_mode="HTML")
         return
-    acc = get_account(context.args[0])
-    if not acc:
-        await update.message.reply_text(f"❌ Không tìm thấy <b>{context.args[0]}</b>", parse_mode="HTML")
+    identifier = context.args[0]
+    name = resolve_account_name(identifier)
+    if not name:
+        await update.message.reply_text(f"❌ Không tìm thấy <b>{identifier}</b>", parse_mode="HTML")
         return
+    acc = get_account(name)
     max_sec = int(acc['max_hours'] * 3600)
     pct = min(acc['elapsed'] / max_sec * 100, 100) if max_sec > 0 else 0
     remaining = max(max_sec - acc['elapsed'], 0)
@@ -513,6 +554,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "list":
         await send_account_list(chat_id, context, edit_msg_id=msg_id)
+    elif data.startswith("page_"):
+        page_num = int(data.split("_")[1])
+        await send_account_list(chat_id, context, edit_msg_id=msg_id, page=page_num)
     elif data == "status":
         await send_status(chat_id, context, edit_msg_id=msg_id)
     elif data == "help" or data == "help_add":
@@ -578,6 +622,20 @@ async def timer_tick(context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"EXPIRED: {a['name']} ({a['max_hours']}h)")
         else:
             db_exec("UPDATE accounts SET elapsed=? WHERE id=?", (new_elapsed, a["id"]))
+            
+            # Early warning (15 minutes = 900 seconds)
+            if max_sec - new_elapsed <= 900 and a["warned_early"] == 0:
+                db_exec("UPDATE accounts SET warned_early=1 WHERE id=?", (a["id"],))
+                chat_id = OWNER_ID if OWNER_ID != 0 else None
+                if chat_id:
+                    remaining_mins = (max_sec - new_elapsed) // 60
+                    await context.bot.send_message(
+                        chat_id,
+                        f"⚠️ <b>Sắp hết giờ!</b>\n\n"
+                        f"Tài khoản <b>{a['name']}</b> chỉ còn khoảng <b>{remaining_mins} phút</b>.\n"
+                        f"⏱ Đã chạy: {fmt_time(new_elapsed)} / {a['max_hours']}h",
+                        parse_mode="HTML"
+                    )
 
 # ==================== MAIN ====================
 
@@ -600,16 +658,16 @@ def main():
             BotCommand("add", "Thêm TK: /add tên giờ"),
             BotCommand("addmulti", "Thêm nhiều TK"),
             BotCommand("list", "Danh sách tài khoản"),
-            BotCommand("info", "Chi tiết TK: /info tên"),
+            BotCommand("info", "Chi tiết TK: /info tên_hoặc_stt"),
             BotCommand("search", "Tìm kiếm TK"),
-            BotCommand("run", "Chạy TK: /run tên"),
-            BotCommand("stop", "Dừng TK: /stop tên"),
+            BotCommand("run", "Chạy TK: /run tên_hoặc_stt"),
+            BotCommand("stop", "Dừng TK: /stop tên_hoặc_stt"),
             BotCommand("runall", "Chạy tất cả"),
             BotCommand("stopall", "Dừng tất cả"),
-            BotCommand("sethours", "Đổi giờ: /sethours tên giờ"),
-            BotCommand("rename", "Đổi tên TK"),
-            BotCommand("reset", "Reset thời gian"),
-            BotCommand("delete", "Xóa TK"),
+            BotCommand("sethours", "Đổi giờ: /sethours tên_hoặc_stt giờ"),
+            BotCommand("rename", "Đổi tên TK: /rename tên_hoặc_stt tên_mới"),
+            BotCommand("reset", "Reset: /reset tên_hoặc_stt"),
+            BotCommand("delete", "Xóa TK: /delete tên_hoặc_stt"),
             BotCommand("deleteall", "Xóa tất cả"),
             BotCommand("export", "Xuất file danh sách"),
             BotCommand("import", "Hướng dẫn import"),
