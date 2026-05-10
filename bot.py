@@ -209,14 +209,18 @@ async def send_account_list(chat_id, context, edit_msg_id=None, page=1):
         # Buttons per account
         n = a["name"]
         if a["status"] == "running":
-            row = [InlineKeyboardButton(f"⏸ {n}", callback_data=f"stop_{n}"),
-                   InlineKeyboardButton(f"🗑", callback_data=f"del_{n}")]
+            btn_primary = InlineKeyboardButton(f"⏸ {n}", callback_data=f"stop_{n}")
         elif a["status"] == "expired":
-            row = [InlineKeyboardButton(f"↺ Reset {n}", callback_data=f"reset_{n}"),
-                   InlineKeyboardButton(f"🗑", callback_data=f"del_{n}")]
+            btn_primary = InlineKeyboardButton(f"🔴 {n}", callback_data=f"expired_{n}")
         else:
-            row = [InlineKeyboardButton(f"▶ {n}", callback_data=f"run_{n}"),
-                   InlineKeyboardButton(f"🗑", callback_data=f"del_{n}")]
+            btn_primary = InlineKeyboardButton(f"▶ {n}", callback_data=f"run_{n}")
+            
+        row = [
+            btn_primary,
+            InlineKeyboardButton("↺", callback_data=f"reset_{n}"),
+            InlineKeyboardButton("⏱", callback_data=f"time_{n}"),
+            InlineKeyboardButton("🗑", callback_data=f"del_{n}")
+        ]
         buttons.append(row)
 
     nav_buttons = []
@@ -245,6 +249,31 @@ async def send_account_list(chat_id, context, edit_msg_id=None, page=1):
             await context.bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
     else:
         await context.bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
+
+async def send_time_menu(chat_id, context, name, edit_msg_id):
+    acc = get_account(name)
+    if not acc:
+        return
+    text = f"⏱ <b>Cài đặt thời gian cho:</b> {name}\nHiện tại: <b>{acc['max_hours']}h</b>\n\nVui lòng chọn mức thời gian mới bên dưới:"
+    kb = [
+        [
+            InlineKeyboardButton("1h", callback_data=f"seth_1_{name}"),
+            InlineKeyboardButton("2h", callback_data=f"seth_2_{name}"),
+            InlineKeyboardButton("3h", callback_data=f"seth_3_{name}"),
+            InlineKeyboardButton("4h", callback_data=f"seth_4_{name}"),
+        ],
+        [
+            InlineKeyboardButton("8h", callback_data=f"seth_8_{name}"),
+            InlineKeyboardButton("12h", callback_data=f"seth_12_{name}"),
+            InlineKeyboardButton("24h", callback_data=f"seth_24_{name}"),
+            InlineKeyboardButton("Khác", callback_data=f"sethother_{name}"),
+        ],
+        [InlineKeyboardButton("🔙 Quay lại danh sách", callback_data="list")]
+    ]
+    try:
+        await context.bot.edit_message_text(text, chat_id=chat_id, message_id=edit_msg_id, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
+    except Exception:
+        pass
 
 @owner_only
 async def cmd_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -582,6 +611,25 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = data[4:]
         delete_account(name)
         await send_account_list(chat_id, context, edit_msg_id=msg_id)
+    elif data.startswith("time_"):
+        name = data[5:]
+        await send_time_menu(chat_id, context, name, msg_id)
+    elif data.startswith("sethother_"):
+        name = data[10:]
+        text = (f"Để cài đặt thời gian tùy ý cho <b>{name}</b>, vui lòng gõ lệnh:\n\n"
+                f"<code>/sethours {name} số_giờ</code>\n\n"
+                f"Ví dụ: <code>/sethours {name} 1.5</code>")
+        kb = [[InlineKeyboardButton("🔙 Quay lại danh sách", callback_data="list")]]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
+    elif data.startswith("seth_"):
+        parts = data.split("_", 2)
+        if len(parts) >= 3:
+            hours = float(parts[1])
+            name = parts[2]
+            set_hours(name, hours)
+            await send_account_list(chat_id, context, edit_msg_id=msg_id)
+    elif data.startswith("expired_"):
+        await query.answer("Tài khoản đã hết giờ. Vui lòng bấm ↺ để Reset trước!", show_alert=True)
     elif data == "runall":
         db_exec("UPDATE accounts SET status='running' WHERE status='stopped'")
         await send_account_list(chat_id, context, edit_msg_id=msg_id)
